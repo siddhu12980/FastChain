@@ -1,137 +1,363 @@
-from fastapi import FastAPI, HTTPException
-import copy
+from typing import Optional
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 import random
-from schemas import TransactionRequest, BalanceRequest
-
+import datetime
+import os
+import constants
+from connectionManager import ConnectionManager
+from schemas import TransactionRequest,BalanceRequest
+from contextlib import asynccontextmanager
 from blockchain import Blockchain
+from typing import Dict
 
-app = FastAPI()
+class MyFastAPI(FastAPI):
+    blockchain: Optional[Blockchain] = None
+    manager: Optional[ConnectionManager] = None
 
-blockchain = Blockchain()
+
+
+@asynccontextmanager
+async def lifespan(app: MyFastAPI):
+    try:
+         constants.print_with_style()
+
+         app.blockchain = Blockchain()
+         app.manager = ConnectionManager()
+
+         print("Visit: http://127.0.0.1:8000 for API")
+         print("Visit: http://127.0.0.1:8000/docs for API documentation.")
+         print()  
+         yield 
+    finally:
+             print("\n🛑 Shutting down FastChain server...")
+
+
+app = MyFastAPI(
+    title="FastChain",
+    description="A lightweight blockchain implementation with WebSocket-based miner network",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 @app.get("/")
-def root():
-    return {"message": "Welcome to my Blockchain app !"}
+async def root():
 
-@app.get('/get_chain')
-def display_chain():
-    response = {'chain': blockchain.chain,
-                'length': len(blockchain.chain)}
-    return response
-
-@app.get('/valid')
-def valid():
-    if blockchain.is_chain_valid():
-        response = {'message': 'The Blockchain is valid.'}
-    else:
-        response = {'message': 'The Blockchain is not valid.'}
-    return response
-
-@app.post('/add_transaction')
-def add_transaction(transaction_data: TransactionRequest):
-    data = transaction_data.model_dump()
-    if 'sender' not in data or 'receiver' not in data or 'amount' not in data:
-        raise HTTPException(status_code=400, detail="Invalid transaction data")
-    
-    if data['sender'] == data['receiver']:
-        raise HTTPException(status_code=400, detail="Sender cannot be the same with receiver")
-
-    if data['amount'] <= 0:
-        raise HTTPException(status_code=400, detail="Transaction amount must be greater than zero")
-
-    index = blockchain.add_transaction(data['sender'], data['receiver'], data['amount'])
-    response = {'message': f'Transaction added to block {index}'}
-    return response
-
-
-@app.post('/add_balance')
-def add_balance(balance_data: BalanceRequest):
-    data = balance_data.model_dump()
-    if 'receiver' not in data or 'amount' not in data:
-        raise HTTPException(status_code=400, detail="Invalid transaction data")
-
-    if data['amount'] <= 0:
-        raise HTTPException(status_code=400, detail="Balance must be greater than zero")
-    
-    index = blockchain.add_balance(data['receiver'], data['amount'])
-    response = {'message': f'Balance added to block {index}'}
-    return response
-
-app.get('/mine_block')
-def mine_block():
-    if not blockchain.is_chain_valid():
-        raise HTTPException(status_code=400, detail="Blockchain is not valid")
-
-    previous_block = blockchain.get_previous_block()
-    previous_hash = previous_block['hash']
-
-    balances = {k: blockchain.balances.get(k, 0) + previous_block['balances'].get(k, 0) for k in set(blockchain.balances) | set(previous_block['balances'])}
-
-    block = blockchain.create_block(balances, previous_hash)
-
-    is_block_valid = True
-    sender_aggregations = {}
-    receiver_aggregations = {}
-    for transaction in block['transactions']:
-        sender = transaction["sender"]
-        receiver = transaction["receiver"]
-        amount = transaction["amount"]
+    # pending_count = len(blockchain.get_pending_transactions())
+    # active_miners = len(manager.active_connections())
         
-        if sender in sender_aggregations:
-            sender_aggregations[sender] += amount
-        else:
-            sender_aggregations[sender] = amount
+    return {
+        "endpoints": {
+            "view_blockchain": {
+                "description": "See all confirmed transactions",
+                "endpoint": "GET /chain"
+            },
+            "send_coins": {
+                "description": "Transfer coins to another address",
+                "endpoint": "POST /transaction",
+                "note": "Requires sender address, receiver address, and amount"
+            },
+            "check_balance": {
+                "description": "View your current balance",
+                "endpoint": "GET /balance/{address}",
+                "note": "Replace {address} with your blockchain address"
+            },
+            "pending_transactions": {
+                "description": "View transactions waiting to be processed",
+                "endpoint": "GET /pending"
+            },
+            "mine": {
+                "description": "Connect as a miner to process transactions",
+                "endpoint": "WS /ws/miner"
+            }
+        },
+    }
 
-        if receiver in receiver_aggregations:
-            receiver_aggregations[receiver] += amount
-        else:
-            receiver_aggregations[receiver] = amount
+@app.get("/dev")
+async def get_dev():
 
-    if not block['balances'] and sender_aggregations:
-        is_block_valid = False
-        raise HTTPException(status_code=400, detail="Invalid transaction data: Not enough amount")
+    chain_length = len(app.blockchain.chain)
+    last_block = app.blockchain.get_previous_block()
+    pending_count = len(app.blockchain.get_pending_transactions())
+
+    return {
+        "status": {
+            "blockchain": {
+                "blocks": chain_length,
+                "latest_block_index": last_block['index'],
+                "latest_block_hash": last_block['hash'][:10] + "...",  
+                "mining_difficulty": app.blockchain.difficulty,
+                "pending_transactions": pending_count
+            },
+            "network": {
+                "active_miners": len(app.manager.active_connections),
+                "mining_reward": app.blockchain.mining_reward
+            }
+        },
+        "api": {
+            "name": "FastChain",
+            "version": "1.0.0",
+            "description": "Lightweight blockchain with WebSocket-based miner network"
+        },
+        "endpoints": {
+            "GET /": {
+                "description": "Get system status and API information",
+                "requires_auth": False
+            },
+            "GET /chain": {
+                "description": "Get full blockchain data and validation status",
+                "returns": "Chain data with length and validity status",
+                "requires_auth": False
+            },
+            "GET /mine": {
+                "description": "Mine a new block with pending transactions",
+                "requires_pending": True,
+                "returns": "Newly mined block data",
+                "requires_auth": False
+            },
+            "POST /transaction": {
+                "description": "Add new transaction to pending pool",
+                "required_fields": ["sender", "receiver", "amount"],
+                "validation": "Checks sender balance and transaction validity",
+                "requires_auth": False
+            },
+            "GET /pending": {
+                "description": "Get list of pending transactions",
+                "returns": "Array of pending transactions with count",
+                "requires_auth": False
+            },
+            "GET /balance/{address}": {
+                "description": "Get current balance for an address",
+                "parameter": "address: string",
+                "returns": "Current balance for the address",
+                "requires_auth": False
+            },
+            "WS /ws/miner": {
+                "description": "WebSocket connection for miners",
+                "protocol": "WebSocket",
+                "events": {
+                    "chain_update": "Receive full chain updates",
+                    "new_block": "Receive/broadcast new blocks"
+                },
+                "requires_auth": False
+            }
+        }
+    }
+
+
+
+@app.websocket("/ws/miner")
+async def websocket_endpoint(websocket: WebSocket):
+    await app.manager.connect(websocket)
+    try:
+        await websocket.send_json({
+            "type": "chain_update",
+            "chain": app.blockchain.chain
+        })
+        
+        while True:
+            data = await websocket.receive_json()
+            print("Ws message: ",data)
+            
+            if data["type"] == "new_block":
+                async with app.manager.mining_lock:
+                    print("Handelling new block first removing pending and broadcasting")
+                    block = data["block"]
+                    if app.blockchain.is_valid_block(block):
+                        app.blockchain.chain.append(block)
+                        for tx in block['transactions']:
+                            app.blockchain.remove_pending_transaction(tx)
+                        await app.manager.broadcast({
+                            "type": "new_block",
+                            "block": block
+                        })
+                        
+            elif data["type"] == "chain_update":
+                new_chain = data["chain"]
+                if app.blockchain.resolve_conflicts(new_chain):
+                    await app.manager.broadcast({
+                        "type": "chain_update",
+                        "chain": app.blockchain.chain
+                    })
+
+            elif data["type"] == "mine":
+                async with app.manager.mining_lock:
+                     if not app.blockchain.is_chain_valid():
+                        await websocket.send_json({"message":"Blockchain Not Valid"})
+                        return
+                     
+                     transactions = app.blockchain.get_pending_transactions()
+
+                     print(transactions)
+
+                     if not transactions:
+                       await websocket.send_json({
+                            "message":"No pending txn"
+                        })
+                       return
+                     
+                     print("Creating New BLock")
+                     
+
+                     block = app.blockchain.create_block_with_transactions(transactions)
+        
+                     if not app.blockchain.is_valid_block(block):
+                       await websocket.send_json({
+                           "message":"invalid block"
+                       })
+                       return
+        
+                     app.blockchain.chain.append(block)
+
+                     app.blockchain.clear_pending_transactions()
+        
+                     await app.manager.broadcast({
+                         "type":"new_block",
+                         "block":block
+                     })
+
+                    
+    except Exception as e:
+        return {
+            "message":"Error",
+            "Error":e
+        }
+    finally:
+        app.manager.disconnect(websocket)
+
+@app.get('/chain')
+async def get_chain():
+    return {
+        'chain': app.blockchain.chain,
+        'length': len(app.blockchain.chain),
+        'is_valid': app.blockchain.is_chain_valid()
+    }
+
+
+@app.get("/mine")
+async def mine_block(background_tasks: BackgroundTasks): #TODO
+    async with app.manager.mining_lock:
+        try:
+            if not app.blockchain.is_chain_valid():
+               raise HTTPException(status_code=400, detail="Blockchain is not valid")
+
+      
+            transactions = app.blockchain.get_pending_transactions()
+            if not transactions:
+             raise HTTPException(status_code=400, detail="No pending transactions to mine")
+
+
+            block = app.blockchain.create_block(transactions)
+        
+
+   
+            if not app.blockchain.is_valid_block(block):
+             raise HTTPException(status_code=400, detail="Invalid block created")
+        
+            app.blockchain.chain.append(block)
+        
+            background_tasks.add_task(app.manager.broadcast, {
+                "type": "new_block",
+                "block": block
+                 })
+
+            return {
+               'message': 'Block successfully mined',
+             'block': block
+                 }
+        except Exception as e:
+
+            return {
+                "Message":"error Occured",
+                "Error":e
+            }
+
+@app.post('/txn')
+async def add_transaction(transaction: TransactionRequest):
+    try:
+        data = transaction.model_dump()
+        print("Adding txn",data)
     
-    if block['balances']:
-        for sender in sender_aggregations:
-            sender_balance = block['balances'].get(sender, 0)
-            if sender_balance < sender_aggregations[sender]:
-                is_block_valid = False
-                raise HTTPException(status_code=400, detail=f"Invalid transaction data for {sender}: Not enough amount")
-            else:
-                block['balances'][sender] = sender_balance - sender_aggregations[sender]
+        if data['sender'] == data['receiver']:
+            raise HTTPException(status_code=400, detail="Sender cannot be same as receiver")
+    
+        if data['amount'] <= 0:
+          raise HTTPException(status_code=400, detail="Amount must be positive")
+    
+        sender_balance = app.blockchain.get_balance(data['sender'])
 
-        for receiver in receiver_aggregations:
-            receiver_balance = block['balances'].get(receiver, 0)
-            block['balances'][receiver] = receiver_balance + receiver_aggregations[receiver]
+        if sender_balance < data['amount']:
+           raise HTTPException(status_code=400, detail="Insufficient balance")
+    
 
-    if is_block_valid:
-        # Append the mined block to the blockchain and update the peer copy
-        blockchain.chain.append(block)
-        blockchain.peer_b = copy.deepcopy(blockchain.chain)
+        
+        app.blockchain.add_transaction(data["sender"],data["receiver"],data["amount"])
+    
+        return {
+            'message': 'Transaction added to pending pool',
+           'transaction': data
+        }
+  
+    except Exception as e:
+        print("Error",e)
+        return e
 
-    response = {'message': 'A block is MINED',
-                'index': block['index'],
-                'timestamp': block['timestamp'],
-                'nonce': block['nonce'],
-                'previous_hash': block['previous_hash'],
-                'hash': block['hash'],
-                'balances': block['balances'],
-                'transactions': block['transactions']}
 
-    return response
+    
 
-def hack_block():
-    random_block_id = random.randint(1, len(blockchain.chain)-1)
-    block = blockchain.chain[random_block_id]
-    nonce, hash = blockchain.hash(block)
-    block['hash'] = hash
-    blockchain.chain[random_block_id] = block
-    response = {'message': 'A block is HACKED',
-            'index': block['index'],
-            'timestamp': block['timestamp'],
-            'nonce': block['nonce'],
-            'previous_hash': block['previous_hash'],
-            'hash': block['hash'],
-            'balances': block['balances'],
-            'transactions': block['transactions']}
-    return response
+
+@app.get('/pending')
+async def get_pending_transactions():
+    return {
+        'pending_transactions': app.blockchain.get_pending_transactions(),
+        'count': len(app.blockchain.get_pending_transactions())
+    }
+
+
+@app.get('/balance/{address}')
+async def get_balance(address: str):
+    balance = app.blockchain.get_balance(address)
+
+    if (balance == 0):
+        return {
+            "Message USer Donest Exists"
+        }
+
+    return {
+        'address': address,
+        'balance': balance
+    }
+
+
+@app.get('/debug/hack')
+async def hack_block():
+    if not app.debug:
+        raise HTTPException(status_code=404)
+        
+    block_id = random.randint(1, len(app.blockchain.chain)-1)
+    block = app.blockchain.chain[block_id]
+   #BLOCKED CHANGED
+    block['timestamp'] = datetime.now().isoformat()
+    block['hash'] = app.blockchain.calculate_hash(block)
+    app.blockchain.chain[block_id] = block
+    
+    return {
+        'message': 'Block hacked for testing',
+        'block': block
+    }
+
+@app.post("/add")
+async def add_money(data:BalanceRequest):
+        req = data.model_dump()
+
+        if(not req["receiver"]):
+           return
+        if (not req["amount"]):
+            return
+        
+        res:Dict[str , float] =  app.blockchain.add_balance(req["receiver"], amount=req["amount"])
+
+        return res
+            
+        
+       
+    
