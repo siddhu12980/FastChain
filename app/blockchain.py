@@ -6,7 +6,6 @@ from typing import Dict, List
 
 
 
-
 class Blockchain:
     def __init__(self):
         self.chain: List[Dict] = []
@@ -55,48 +54,31 @@ class Blockchain:
             return {}
         return copy.deepcopy(self.chain[-1].get('balances', {}))
     
-    def create_block_with_transactions(self, transactions: List[Dict]) -> Dict:
+    def create_block_with_transactions(self, transactions: List[Dict],miner) -> Dict:
  
         print("Creating New Block with Transactions")
         
-   
-        current_balances = self.get_current_balances()
-        new_balances = copy.deepcopy(current_balances)
-        
-        for tx in transactions:
-            sender = tx['sender']
-            receiver = tx['receiver']
-            amount = tx['amount']
-            
-           
-            if sender in new_balances:
-                new_balances[sender] = new_balances.get(sender, 0) - amount
-         
-            new_balances[receiver] = new_balances.get(receiver, 0) + amount
-        
-        # # Add mining reward to the miner (assuming first transaction sender is the miner)
-        # miner = transactions[0]['sender'] if transactions else None
-        # if miner:
-        #     new_balances[miner] = new_balances.get(miner, 0) + self.mining_reward
-        
-        # Get the previous hash from the last block
+      
         previous_hash = self.chain[-1]['hash'] if self.chain else '0'*64
         
-        print(previous_hash)
+        print(previous_hash
+              )
+        
         tx=copy.deepcopy(transactions)
-        # Create the new block
+  
         block = {
             'index': len(self.chain) + 1,
             'timestamp': str(datetime.datetime.now()),
             'transactions': copy.deepcopy(transactions),
             # 'balances': new_balances,
-            'balances':{},
+            'balances':{
+                miner: self.mining_reward
+                },
             'previous_hash': previous_hash,
             'merkle_root': self.calculate_merkle_root_for_block(tx),
             'version': '1.0',
         }
         
-        # Calculate nonce and hash
         nonce, hash = self.hash(block)
         block['nonce'] = nonce
         block['hash'] = hash
@@ -220,6 +202,11 @@ class Blockchain:
         print("Checking Chain Validation")
         previous_block = self.chain[0]
         block_index = 1
+       
+        print("Start Peer")
+        print(self.peer_b)
+        print("End Peer") 
+        
     
         while block_index < len(self.chain):
             block = self.chain[block_index]
@@ -229,8 +216,7 @@ class Blockchain:
                 return False
             
             #print("Comparing With Peer Copy ! like multiples chain maintners")
-
-            # if block['hash'] != self.peer_b[block_index]['hash']:   
+                    # if block['hash'] != self.peer_b[block_index]['hash']:   
             #     return False
 
           

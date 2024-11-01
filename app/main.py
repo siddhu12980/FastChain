@@ -15,7 +15,6 @@ class MyFastAPI(FastAPI):
     manager: Optional[ConnectionManager] = None
 
 
-
 @asynccontextmanager
 async def lifespan(app: MyFastAPI):
     try:
@@ -42,9 +41,6 @@ app = MyFastAPI(
 @app.get("/")
 async def root():
 
-    # pending_count = len(blockchain.get_pending_transactions())
-    # active_miners = len(manager.active_connections())
-        
     return {
         "endpoints": {
             "view_blockchain": {
@@ -198,7 +194,7 @@ async def websocket_endpoint(websocket: WebSocket):
                      print("Creating New BLock")
                      
 
-                     block = app.blockchain.create_block_with_transactions(transactions)
+                     block = app.blockchain.create_block_with_transactions(transactions,miner=data["miner"])
         
                      if not app.blockchain.is_valid_block(block):
                        await websocket.send_json({
@@ -221,8 +217,11 @@ async def websocket_endpoint(websocket: WebSocket):
             "message":"Error",
             "Error":e
         }
+    except WebSocketDisconnect:
+        app.manager.disconnect(websocket=websocket)
     finally:
-        app.manager.disconnect(websocket)
+        print("Socket CLosed")
+
 
 @app.get('/chain')
 async def get_chain():
@@ -231,6 +230,15 @@ async def get_chain():
         'length': len(app.blockchain.chain),
         'is_valid': app.blockchain.is_chain_valid()
     }
+
+
+@app.get('/peer')
+async def get_peer():
+    return {
+        'chain': app.blockchain.peer_b,
+        'length': len(app.blockchain.peer_b),
+    }
+
 
 
 @app.get("/mine")
@@ -328,16 +336,16 @@ async def get_balance(address: str):
     }
 
 
-@app.get('/debug/hack')
+@app.get('/hack')
 async def hack_block():
-    if not app.debug:
-        raise HTTPException(status_code=404)
+    # if not app.debug:
+    #     raise HTTPException(status_code=404)
         
     block_id = random.randint(1, len(app.blockchain.chain)-1)
     block = app.blockchain.chain[block_id]
    #BLOCKED CHANGED
-    block['timestamp'] = datetime.now().isoformat()
-    block['hash'] = app.blockchain.calculate_hash(block)
+    block['timestamp'] = str(datetime.datetime.now())
+    block['hash'] = app.blockchain.hash(block)
     app.blockchain.chain[block_id] = block
     
     return {

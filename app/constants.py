@@ -30,13 +30,6 @@ actions_box = """
 """
 
 
-# async def lifespan(app:FastAPI):
-#     print(banner)
-#     print(status_box)
-#     print(actions_box)
-#     yield
-#     print("Shutting down...")
-
 
 
 def print_with_style():
