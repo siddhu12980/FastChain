@@ -241,44 +241,6 @@ async def get_peer():
 
 
 
-@app.get("/mine")
-async def mine_block(background_tasks: BackgroundTasks): #TODO
-    async with app.manager.mining_lock:
-        try:
-            if not app.blockchain.is_chain_valid():
-               raise HTTPException(status_code=400, detail="Blockchain is not valid")
-
-      
-            transactions = app.blockchain.get_pending_transactions()
-            if not transactions:
-             raise HTTPException(status_code=400, detail="No pending transactions to mine")
-
-
-            block = app.blockchain.create_block(transactions)
-        
-
-   
-            if not app.blockchain.is_valid_block(block):
-             raise HTTPException(status_code=400, detail="Invalid block created")
-        
-            app.blockchain.chain.append(block)
-        
-            background_tasks.add_task(app.manager.broadcast, {
-                "type": "new_block",
-                "block": block
-                 })
-
-            return {
-               'message': 'Block successfully mined',
-             'block': block
-                 }
-        except Exception as e:
-
-            return {
-                "Message":"error Occured",
-                "Error":e
-            }
-
 @app.post('/txn')
 async def add_transaction(transaction: TransactionRequest):
     try:
@@ -343,7 +305,7 @@ async def hack_block():
         
     block_id = random.randint(1, len(app.blockchain.chain)-1)
     block = app.blockchain.chain[block_id]
-   #BLOCKED CHANGED
+    
     block['timestamp'] = str(datetime.datetime.now())
     block['hash'] = app.blockchain.hash(block)
     app.blockchain.chain[block_id] = block
