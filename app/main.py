@@ -334,7 +334,7 @@ async def mine_api(miner: str, response: Response):
             "message": f"Mining operation failed: {str(e)}"
         }
 
-@app.get('/chain')
+@app.get('/blockchain')
 async def get_chain():
     try:
         return {
