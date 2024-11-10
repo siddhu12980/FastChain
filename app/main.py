@@ -39,7 +39,8 @@ app = MyFastAPI(
     title="FastChain",
     description="A lightweight blockchain implementation with WebSocket-based miner network",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    root_path="/chain"
 )   
 app.add_middleware(
     CORSMiddleware,

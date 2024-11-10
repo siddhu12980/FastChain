@@ -1,5 +1,4 @@
 name: CI/CD Pipeline
-
 on:
   push:
     branches:
@@ -29,4 +28,3 @@ jobs:
         tags: |
           siddjuugi/fast-chain:latest 
           siddjuugi/fast-chain:${{ github.sha }}
-
