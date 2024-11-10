@@ -28,3 +28,24 @@ jobs:
         tags: |
           siddjuugi/fast-chain:latest 
           siddjuugi/fast-chain:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Kubectl
+      uses: azure/k8s-set-context@v1
+      with:
+        kubeconfig: ${{ secrets.KUBECONFIG }}
+
+    - name: Update deployment image
+      run: |
+        sed -i 's|siddjuugi/fast-chain:latest|siddjuugi/fast-chain:${{ github.sha }}|' depo.yaml
+        kubectl apply -f depo.yaml
+
+    - name: Verify deployment
+      run: |
+        kubectl rollout status deployment/fast-chain
